@@ -28,6 +28,7 @@
         if (saved && saved.state && Array.isArray(saved.state.players)) {
           state = saved.state;
           history = Array.isArray(saved.history) ? saved.history : [];
+          savedAt = Number(saved.savedAt) || 0;
           return;
         }
       }
@@ -37,9 +38,92 @@
   }
 
   function save() {
+    savedAt = Date.now();
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ state: state, history: history }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ state: state, history: history, savedAt: savedAt }));
     } catch (e) { /* keep working without persistence */ }
+    queueCloudSave();
+  }
+
+  // ---------- cloud copy (only when published as a claude.ai artifact) ----------
+  // The game is mirrored to one document in the artifact's store, so it
+  // survives a cleared browser, opens on another device, and can be read back.
+
+  var savedAt = 0;
+  var cloud = { doc: null, timer: null, writing: false, pending: false, status: '' };
+
+  function setCloudStatus(text) {
+    cloud.status = text;
+    var el = $('cloud-status');
+    if (el) el.textContent = text;
+  }
+
+  function queueCloudSave() {
+    if (!cloud.doc || state.sample) return;
+    clearTimeout(cloud.timer);
+    cloud.timer = setTimeout(writeCloud, 800);
+  }
+
+  function writeCloud() {
+    if (cloud.writing) { cloud.pending = true; return; }
+    cloud.writing = true;
+    setCloudStatus('Saving…');
+    cloud.doc.set({ savedAt: savedAt, state: state })
+      .then(function () { setCloudStatus('Saved to cloud'); })
+      .catch(function (err) {
+        setCloudStatus(err && err.code === 'invalid_argument' ? 'Saved on this device only' : 'Cloud save failed; saved on this device');
+      })
+      .then(function () {
+        cloud.writing = false;
+        if (cloud.pending) { cloud.pending = false; writeCloud(); }
+      });
+  }
+
+  function connectCloud() {
+    if (!window.claude || typeof window.claude.use !== 'function') return;
+    window.claude.use('db').then(function (db) {
+      if (!db) return;
+      cloud.doc = db.doc('games/current');
+      return cloud.doc.get().then(function (snap) {
+        var remote = snap.exists ? snap.data() : null;
+        if (remote && remote.state && Number(remote.savedAt) > savedAt) {
+          // Newer game from another device: take it.
+          state = JSON.parse(JSON.stringify(remote.state));
+          savedAt = Number(remote.savedAt);
+          history = [];
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify({ state: state, history: history, savedAt: savedAt }));
+          } catch (e) { /* ignore */ }
+          render();
+          setCloudStatus('Loaded from cloud');
+        } else if (!state.sample && (!remote || Number(remote.savedAt) < savedAt)) {
+          writeCloud();
+        } else {
+          setCloudStatus(state.sample ? '' : 'Saved to cloud');
+        }
+      });
+    }).catch(function () { setCloudStatus(''); });
+  }
+
+  function exportText() {
+    return JSON.stringify({ app: 'poker-chip-ledger', savedAt: savedAt, state: state }, null, 2);
+  }
+
+  function copyGameData() {
+    var text = exportText();
+    var box = $('export-box');
+    function fallback() {
+      box.value = text;
+      box.hidden = false;
+      box.focus();
+      box.select();
+      toast('Select all and copy the text below');
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { toast('Game data copied'); }, fallback);
+    } else {
+      fallback();
+    }
   }
 
   // A few hands already played, so the ledger shows how profit and loss read.
@@ -400,6 +484,7 @@
 
     switch (action) {
       case 'undo': undo(); break;
+      case 'export': copyGameData(); break;
       case 'reset':
         if (ui.armed !== 'reset') { ui.armed = 'reset'; render(); return; }
         var settings = state.settings;
@@ -526,4 +611,5 @@
 
   load();
   render();
+  connectCloud();
 })();

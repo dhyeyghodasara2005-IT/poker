@@ -390,6 +390,17 @@ input[type="number"] { font-family: var(--font-num); font-variant-numeric: tabul
 }
 
 .empty { color: var(--muted); margin: 0; }
+.panel > .btn-small { justify-self: start; }
+.export-box {
+  width: 100%;
+  font-family: var(--font-num);
+  font-size: var(--step--1);
+  color: var(--ink);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+}
 
 .toast {
   position: fixed;

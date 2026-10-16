@@ -77,8 +77,13 @@
       </section>
 
       <section class="panel" aria-labelledby="log-h">
-        <h2 id="log-h">Hand log</h2>
+        <div class="panel-head">
+          <h2 id="log-h">Hand log</h2>
+          <span class="label" id="cloud-status"></span>
+        </div>
         <ol class="log" id="log" reversed></ol>
+        <button type="button" class="btn-small" data-action="export">Copy game data</button>
+        <textarea id="export-box" class="export-box" rows="8" readonly aria-label="Game data" hidden></textarea>
       </section>
     </div>
   </div>
