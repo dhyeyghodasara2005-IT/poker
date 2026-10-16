@@ -1,0 +1,10 @@
+{
+  "name": "poker-chip-ledger",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Track bets, blinds, pots and profit/loss for a home poker game.",
+  "scripts": {
+    "start": "npx --yes serve .",
+    "test": "node --test tests/engine.test.js"
+  }
+}

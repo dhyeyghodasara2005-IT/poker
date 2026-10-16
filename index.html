@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Poker Chip Ledger</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Mono:wght@500;600;700&family=Instrument+Sans:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <span class="brand-chip" aria-hidden="true"></span>
+      <h1>Poker Chip Ledger</h1>
+    </div>
+    <div class="top-actions">
+      <button type="button" id="undo-btn" data-action="undo">Undo</button>
+      <button type="button" id="reset-btn" class="btn-danger" data-action="reset">New session</button>
+    </div>
+  </header>
+
+  <div id="banner"></div>
+
+  <div class="columns">
+    <div class="col">
+      <section class="felt" id="felt" aria-label="Table"></section>
+      <section class="panel" id="action" aria-label="Action"></section>
+    </div>
+
+    <div class="col">
+      <section class="panel" aria-labelledby="players-h">
+        <div class="panel-head">
+          <h2 id="players-h">Players</h2>
+          <span class="label" id="blinds-label"></span>
+        </div>
+        <div class="ledger" id="ledger"></div>
+        <div class="totals" id="totals"></div>
+        <form class="add-form" id="add-form" autocomplete="off">
+          <div class="field">
+            <label class="label" for="add-name">Name</label>
+            <input type="text" id="add-name" placeholder="Player name" maxlength="24">
+          </div>
+          <div class="field">
+            <label class="label" for="add-buyin">Buy-in</label>
+            <input type="number" id="add-buyin" min="1" step="1" inputmode="numeric">
+          </div>
+          <button type="submit" class="btn-primary">Add player</button>
+        </form>
+      </section>
+
+      <section class="panel" aria-labelledby="settings-h">
+        <h2 id="settings-h">Blinds &amp; buy-in</h2>
+        <form class="settings" id="settings-form">
+          <div class="field">
+            <label class="label" for="set-sb">Small blind</label>
+            <input type="number" id="set-sb" min="0" step="1" inputmode="numeric">
+          </div>
+          <div class="field">
+            <label class="label" for="set-bb">Big blind</label>
+            <input type="number" id="set-bb" min="1" step="1" inputmode="numeric">
+          </div>
+          <div class="field">
+            <label class="label" for="set-buyin">Default buy-in</label>
+            <input type="number" id="set-buyin" min="1" step="1" inputmode="numeric">
+          </div>
+        </form>
+        <p class="hint">New blinds take effect from the next hand.</p>
+      </section>
+
+      <section class="panel" aria-labelledby="settle-h">
+        <h2 id="settle-h">Settle up</h2>
+        <div id="settle"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="log-h">
+        <h2 id="log-h">Hand log</h2>
+        <ol class="log" id="log" reversed></ol>
+      </section>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script src="engine.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
