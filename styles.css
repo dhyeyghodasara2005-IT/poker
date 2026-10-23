@@ -390,8 +390,7 @@ input[type="number"] { font-family: var(--font-num); font-variant-numeric: tabul
 }
 
 .empty { color: var(--muted); margin: 0; }
-.panel > .btn-small { justify-self: start; }
-.export-box {
+.backup-box {
   width: 100%;
   font-family: var(--font-num);
   font-size: var(--step--1);
@@ -414,4 +413,75 @@ input[type="number"] { font-family: var(--font-num); font-variant-numeric: tabul
   border-radius: 8px;
   font-weight: 600;
   z-index: 20;
+}
+
+/* ---------- save status ---------- */
+.top-actions { align-items: center; }
+.save-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--step--1);
+  font-weight: 600;
+  color: var(--muted);
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+.save-status::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--win);
+  flex: none;
+}
+.save-status[data-tone="wait"]::before { background: var(--brass); }
+.save-status[data-tone="bad"] { color: var(--loss); border-color: var(--loss); }
+.save-status[data-tone="bad"]::before { background: var(--loss); }
+
+/* ---------- past sessions ---------- */
+.past { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.past li { display: grid; gap: 4px; padding-top: 12px; border-top: 1px solid var(--line); }
+.past li:first-child { border-top: 0; padding-top: 0; }
+.past-head { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-weight: 600; }
+.past-nets { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: var(--step--1); }
+.past-nets .up { color: var(--win); }
+.past-nets .down { color: var(--loss); }
+
+/* ---------- desktop keyboard hints ---------- */
+kbd {
+  display: none;
+  font-family: var(--font-num);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  padding: 0 5px;
+  margin-left: 6px;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+  opacity: 0.6;
+  vertical-align: 2px;
+}
+@media (hover: hover) and (pointer: fine) {
+  kbd { display: inline-block; }
+}
+
+/* ---------- touch & small screens ---------- */
+button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+input[type="text"], input[type="number"], textarea { font-size: 16px; } /* stops iOS zooming on focus */
+
+@media (max-width: 600px) {
+  .wrap { gap: 14px; padding-block: 10px 32px; }
+  .columns, .col { gap: 14px; }
+  h1 { font-size: 1.25rem; }
+  .brand-chip { width: 24px; height: 24px; border-width: 3px; }
+  .felt { border-radius: 20px; padding: 12px 10px 14px; gap: 10px; }
+  .pot-amount { font-size: 2.25rem; }
+  .seats { gap: 6px; }
+  .seat { min-width: 0; flex: 1 1 28%; padding: 4px 6px; }
+  .panel { padding: 14px 12px; }
+  .act-row button { min-height: 56px; }
+  .actor-name { font-size: 1.375rem; }
+  .raise-presets button { min-height: 40px; }
 }

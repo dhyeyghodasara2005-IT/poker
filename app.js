@@ -2,7 +2,6 @@
   'use strict';
 
   var E = window.PokerEngine;
-  var STORAGE_KEY = 'poker-chip-ledger-v1';
   var HISTORY_LIMIT = 100;
   var fmt = new Intl.NumberFormat();
 
@@ -19,105 +18,155 @@
   var $ = function (id) { return document.getElementById(id); };
 
   // ---------- persistence ----------
+  // GameStore (store.js) saves every change on this device at once and mirrors
+  // it to the artifact database when the page runs on claude.ai.
+
+  var store = window.GameStore.createStore({
+    storage: safeStorage(),
+    onRemote: adoptRemote,
+    onStatus: renderSaveStatus
+  });
+
+  function safeStorage() {
+    try { return window.localStorage; } catch (e) { return null; }
+  }
+
+  function newId() {
+    return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+  }
+
+  function newSession(settings) {
+    var s = E.createState();
+    if (settings) s.settings = settings;
+    s.sessionId = newId();
+    s.startedAt = Date.now();
+    return s;
+  }
 
   function load() {
-    try {
-      var raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        var saved = JSON.parse(raw);
-        if (saved && saved.state && Array.isArray(saved.state.players)) {
-          state = saved.state;
-          history = Array.isArray(saved.history) ? saved.history : [];
-          savedAt = Number(saved.savedAt) || 0;
-          return;
-        }
-      }
-    } catch (e) { /* storage unavailable: fall through to the sample table */ }
-    state = sampleState();
-    history = [];
+    var saved = store.loadLocal();
+    if (saved) {
+      state = saved.state;
+      history = saved.history;
+    } else {
+      state = sampleState();
+      history = [];
+    }
+    if (!state.sessionId) { state.sessionId = newId(); state.startedAt = Date.now(); }
+    store.prime(state, !state.sample);
   }
 
   function save() {
-    savedAt = Date.now();
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ state: state, history: history, savedAt: savedAt }));
-    } catch (e) { /* keep working without persistence */ }
-    queueCloudSave();
-  }
-
-  // ---------- cloud copy (only when published as a claude.ai artifact) ----------
-  // The game is mirrored to one document in the artifact's store, so it
-  // survives a cleared browser, opens on another device, and can be read back.
-
-  var savedAt = 0;
-  var cloud = { doc: null, timer: null, writing: false, pending: false, status: '' };
-
-  function setCloudStatus(text) {
-    cloud.status = text;
-    var el = $('cloud-status');
-    if (el) el.textContent = text;
-  }
-
-  function queueCloudSave() {
-    if (!cloud.doc || state.sample) return;
-    clearTimeout(cloud.timer);
-    cloud.timer = setTimeout(writeCloud, 800);
-  }
-
-  function writeCloud() {
-    if (cloud.writing) { cloud.pending = true; return; }
-    cloud.writing = true;
-    setCloudStatus('Saving…');
-    cloud.doc.set({ savedAt: savedAt, state: state })
-      .then(function () { setCloudStatus('Saved to cloud'); })
-      .catch(function (err) {
-        setCloudStatus(err && err.code === 'invalid_argument' ? 'Saved on this device only' : 'Cloud save failed; saved on this device');
-      })
-      .then(function () {
-        cloud.writing = false;
-        if (cloud.pending) { cloud.pending = false; writeCloud(); }
-      });
+    store.save(state, history, !state.sample);
   }
 
   function connectCloud() {
     if (!window.claude || typeof window.claude.use !== 'function') return;
     window.claude.use('db').then(function (db) {
       if (!db) return;
-      cloud.doc = db.doc('games/current');
-      return cloud.doc.get().then(function (snap) {
-        var remote = snap.exists ? snap.data() : null;
-        if (remote && remote.state && Number(remote.savedAt) > savedAt) {
-          // Newer game from another device: take it.
-          state = JSON.parse(JSON.stringify(remote.state));
-          savedAt = Number(remote.savedAt);
-          history = [];
-          try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify({ state: state, history: history, savedAt: savedAt }));
-          } catch (e) { /* ignore */ }
-          render();
-          setCloudStatus('Loaded from cloud');
-        } else if (!state.sample && (!remote || Number(remote.savedAt) < savedAt)) {
-          writeCloud();
-        } else {
-          setCloudStatus(state.sample ? '' : 'Saved to cloud');
-        }
-      });
-    }).catch(function () { setCloudStatus(''); });
+      store.connect(db);
+      watchSessions(db);
+    }).catch(function () { /* stays on this device */ });
   }
 
+  // Another device saved a newer game.
+  function adoptRemote(remote) {
+    if (!state.sample && state.players.length &&
+        (remote.state.sessionId !== state.sessionId || store.hasUnsynced())) {
+      // Keep what this device had, so nothing is lost if both were in use.
+      archiveSession(state, remote.state.sessionId === state.sessionId ? 'conflict' : 'replaced');
+    }
+    state = remote.state;
+    history = [];
+    ui.picks = {};
+    ui.raiseFor = null;
+    ui.armed = null;
+    store.adopt(state, remote.savedAt);
+    render();
+    toast('Updated from another device');
+  }
+
+  // A hand still in progress is treated as void: chips in its pot go back to their owners.
+  function summary(s) {
+    return s.players.map(function (p) {
+      var stack = p.stack + (s.hand && s.hand.p[p.id] ? s.hand.p[p.id].total : 0);
+      return { name: p.name, buyIn: p.buyIn, stack: stack, net: stack - p.buyIn };
+    });
+  }
+
+  function archiveSession(s, reason) {
+    if (!s || s.sample || (!s.players.length && !s.handCount)) return;
+    var id = s.sessionId || newId();
+    if (reason === 'conflict') id += '~conflict-' + Date.now().toString(36);
+    store.enqueue('sessions/' + id, {
+      sessionId: s.sessionId || id,
+      reason: reason || 'ended',
+      startedAt: s.startedAt || null,
+      endedAt: Date.now(),
+      handCount: s.handCount,
+      blinds: { small: s.settings.smallBlind, big: s.settings.bigBlind },
+      players: summary(s),
+      state: s
+    });
+  }
+
+  // One permanent record per finished hand, beyond the on-screen log limit.
+  function recordHand(s) {
+    var lh = s.lastHand;
+    if (!lh || s.sample) return;
+    var nm = function (id) { var p = E.getPlayer(s, id); return p ? p.name : '?'; };
+    store.enqueue('hands/' + s.sessionId + '_' + lh.number, {
+      sessionId: s.sessionId,
+      number: lh.number,
+      finishedAt: Date.now(),
+      blinds: { small: s.settings.smallBlind, big: s.settings.bigBlind },
+      dealer: nm(s.dealerId),
+      contributions: lh.contributions.map(function (c) { return { name: nm(c.id), amount: c.amount }; }),
+      awards: lh.awards.map(function (a) { return { name: nm(a.id), amount: a.amount }; }),
+      players: summary(s),
+      log: s.log.filter(function (e) { return e.hand === lh.number; }).map(function (e) { return e.text; })
+    });
+  }
+
+  var pastSessions = [];
+  function watchSessions(db) {
+    try {
+      db.collection('sessions').orderBy('endedAt', 'desc').limit(20).onSnapshot(function (snap) {
+        pastSessions = snap.docs.map(function (d) { return d.data(); });
+        renderPast();
+      }, function () { /* list stays as it was */ });
+    } catch (e) { /* no history list */ }
+  }
+
+  function renderSaveStatus(st) {
+    var el = $('save-status');
+    if (!el) return;
+    el.textContent = st.label;
+    el.dataset.tone = st.tone;
+    el.title = st.pending ? st.pending + ' change' + (st.pending === 1 ? '' : 's') + ' waiting to sync' : '';
+  }
+
+  window.addEventListener('online', function () { store.kick(); });
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') store.flushNow();
+    else store.kick();
+  });
+  window.addEventListener('pagehide', function () { store.flushNow(); });
+
+  // ---------- backup ----------
+
   function exportText() {
-    return JSON.stringify({ app: 'poker-chip-ledger', savedAt: savedAt, state: state }, null, 2);
+    return JSON.stringify({ app: 'poker-chip-ledger', exportedAt: new Date().toISOString(), state: state }, null, 2);
   }
 
   function copyGameData() {
     var text = exportText();
-    var box = $('export-box');
+    var box = $('backup-box');
     function fallback() {
       box.value = text;
-      box.hidden = false;
       box.focus();
       box.select();
-      toast('Select all and copy the text below');
+      toast('Copy the selected text');
     }
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(function () { toast('Game data copied'); }, fallback);
@@ -126,9 +175,28 @@
     }
   }
 
+  function restoreGameData() {
+    var parsed;
+    try { parsed = JSON.parse($('backup-box').value); } catch (e) { parsed = null; }
+    var s = parsed && (parsed.state || parsed);
+    if (!s || !Array.isArray(s.players) || !s.settings) {
+      toast('Paste game data copied from this app first');
+      return;
+    }
+    if (mutate(function () {
+      archiveSession(state, 'replaced');
+      state = s;
+      state.sample = false;
+      if (!state.sessionId) { state.sessionId = newId(); state.startedAt = Date.now(); }
+    })) {
+      $('backup-box').value = '';
+      toast('Game restored');
+    }
+  }
+
   // A few hands already played, so the ledger shows how profit and loss read.
   function sampleState() {
-    var s = E.createState();
+    var s = newSession();
     s.sample = true;
     E.setBlinds(s, 10, 20);
     ['Asha', 'Ben', 'Carlos', 'Dee'].forEach(function (n) { E.addPlayer(s, n, 1000); });
@@ -149,6 +217,7 @@
 
   function mutate(fn) {
     var before = JSON.stringify(state);
+    var handBefore = state.hand ? state.hand.number : null;
     try {
       fn();
     } catch (err) {
@@ -160,6 +229,7 @@
     history.push(before);
     if (history.length > HISTORY_LIMIT) history.shift();
     ui.armed = null;
+    if (handBefore != null && !state.hand && state.lastHand && state.lastHand.number === handBefore) recordHand(state);
     save();
     render();
     return true;
@@ -221,6 +291,7 @@
     renderSettings();
     renderSettle();
     renderLog();
+    renderPast();
     $('undo-btn').disabled = history.length === 0;
     var reset = $('reset-btn');
     reset.classList.toggle('armed', ui.armed === 'reset');
@@ -296,8 +367,8 @@
     var html = '<div class="actor"><div><span class="label">To act</span><div class="actor-name">' + name(L.playerId) + '</div></div>' +
       '<div class="actor-facts"><span>Stack <b>' + n(L.stack) + '</b></span><span>In this round <b>' + n(L.bet) + '</b></span>' +
       '<span>To call <b>' + n(L.toCall) + '</b></span></div></div>';
-    html += '<div class="act-row"><button type="button" class="btn-fold" data-action="fold">Fold</button>' +
-      '<button type="button" class="btn-call" data-action="' + (L.canCheck ? 'check' : 'call') + '">' + callLabel + '</button></div>';
+    html += '<div class="act-row"><button type="button" class="btn-fold" data-action="fold">Fold<kbd>F</kbd></button>' +
+      '<button type="button" class="btn-call" data-action="' + (L.canCheck ? 'check' : 'call') + '">' + callLabel + '<kbd>C</kbd></button></div>';
 
     if (L.canRaise) {
       var verb = L.isBet ? 'Bet' : 'Raise to';
@@ -313,7 +384,7 @@
         html += '<button type="button" class="btn-small" data-action="preset" data-value="' + p[1] + '">' + p[0] + '</button>';
       });
       html += '</div><div class="raise-go"><div class="field"><label class="label" for="raise-input">' +
-        (L.isBet ? 'Bet amount' : 'Raise to') + '</label>' +
+        (L.isBet ? 'Bet amount' : 'Raise to') + '<kbd>R</kbd></label>' +
         '<input type="number" id="raise-input" min="' + L.minRaiseTo + '" max="' + L.maxRaiseTo + '" step="1" inputmode="numeric" value="' + ui.raiseTo + '"></div>' +
         '<button type="button" class="btn-primary" data-action="raise" id="raise-btn">' + verb + ' ' + n(ui.raiseTo) + '</button></div>' +
         '<p class="hint">' + (L.isBet ? '' : 'Total for this round. ') + 'Minimum ' + n(L.minRaiseTo) + ', maximum ' + n(L.maxRaiseTo) + ' (all-in).</p></div>';
@@ -332,7 +403,7 @@
         (pos.sbId !== pos.dealerId ? '<span><span class="badge badge-sb">SB</span>' + name(pos.sbId) + ' posts ' + n(state.settings.smallBlind) + '</span>'
           : '<span><span class="badge badge-sb">SB</span>Dealer posts ' + n(state.settings.smallBlind) + '</span>') +
         '<span><span class="badge badge-bb">BB</span>' + name(pos.bbId) + ' posts ' + n(state.settings.bigBlind) + '</span></div>' +
-        '<button type="button" class="btn-primary deal" data-action="deal">Deal hand #' + (state.handCount + 1) + '</button>';
+        '<button type="button" class="btn-primary deal" data-action="deal">Deal hand #' + (state.handCount + 1) + '<kbd>D</kbd></button>';
     } else {
       html += '<p class="empty">Add at least two players with chips to deal a hand.</p>';
     }
@@ -465,6 +536,21 @@
     }).join('') + '</ul>' + note;
   }
 
+  function renderPast() {
+    var panel = $('past-panel');
+    panel.hidden = !pastSessions.length;
+    if (!pastSessions.length) return;
+    $('past').innerHTML = '<ul class="past">' + pastSessions.map(function (p) {
+      var when = p.endedAt ? new Date(p.endedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '';
+      var players = (p.players || []).slice().sort(function (a, b) { return b.net - a.net; });
+      var note = p.reason === 'conflict' ? ' · copy kept from another device' : p.reason === 'replaced' ? ' · replaced' : '';
+      return '<li><div class="past-head"><span>' + esc(when) + '</span><span class="label">' + (p.handCount || 0) +
+        ' hands' + note + '</span></div><div class="past-nets num">' + players.map(function (x) {
+          return '<span class="' + (x.net > 0 ? 'up' : x.net < 0 ? 'down' : '') + '">' + esc(x.name) + ' ' + signed(x.net) + '</span>';
+        }).join('') + '</div></li>';
+    }).join('') + '</ul>';
+  }
+
   function renderLog() {
     var items = state.log.slice(-80).reverse();
     $('log').innerHTML = items.length ? items.map(function (e) {
@@ -485,21 +571,17 @@
     switch (action) {
       case 'undo': undo(); break;
       case 'export': copyGameData(); break;
+      case 'restore': restoreGameData(); break;
       case 'reset':
         if (ui.armed !== 'reset') { ui.armed = 'reset'; render(); return; }
-        var settings = state.settings;
+        archiveSession(state, 'ended');
         history.push(JSON.stringify(state));
-        state = E.createState();
-        state.settings = settings;
+        state = newSession(state.settings);
         ui = { raiseTo: null, raiseFor: null, picks: {}, openRow: null, armed: null };
         save(); render(); toast('New session started');
         break;
       case 'fresh':
-        mutate(function () {
-          var settings = state.settings;
-          state = E.createState();
-          state.settings = settings;
-        });
+        mutate(function () { state = newSession(state.settings); });
         ui.openRow = null;
         $('add-name').focus();
         break;
@@ -573,10 +655,38 @@
     if (t.id === 'add-buyin') t.dataset.touched = '1';
   });
 
+  // Desktop shortcuts: F fold, C check/call, R raise amount, A all-in, D deal, Ctrl+Z undo.
   document.addEventListener('keydown', function (ev) {
-    if (ev.key === 'Enter' && ev.target.id === 'raise-input') {
+    var t = ev.target;
+    if (ev.key === 'Enter' && t.id === 'raise-input') {
       ev.preventDefault();
       $('raise-btn').click();
+      return;
+    }
+    if (ev.key === 'Escape' && t.id === 'raise-input') { t.blur(); return; }
+    var typing = /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable;
+    if (typing || ev.altKey) return;
+    if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'z') {
+      ev.preventDefault();
+      undo();
+      return;
+    }
+    if (ev.ctrlKey || ev.metaKey) return;
+    var click = function (sel) { var b = document.querySelector(sel); if (b && !b.disabled) { ev.preventDefault(); b.click(); } };
+    switch (ev.key.toLowerCase()) {
+      case 'f': click('[data-action=fold]'); break;
+      case 'c': click('[data-action=call], [data-action=check]'); break;
+      case 'd': click('[data-action=deal]'); break;
+      case 'a': {
+        var presets = document.querySelectorAll('[data-action=preset]');
+        if (presets.length) { ev.preventDefault(); presets[presets.length - 1].click(); $('raise-input').focus(); }
+        break;
+      }
+      case 'r': {
+        var input = $('raise-input');
+        if (input) { ev.preventDefault(); input.focus(); input.select(); }
+        break;
+      }
     }
   });
 

@@ -26,7 +26,33 @@ profit or loss.
 - **Settle up.** The fewest payments needed to square everyone up.
 - **Hand log and undo.** Every action is logged. Undo steps back through the
   last 100 changes.
-- Saves in the browser automatically (localStorage). Works on a phone.
+- **Phone and computer.** On a phone, the action buttons fit on the first screen
+  and are sized for thumbs. On a computer there are keyboard shortcuts: `D` deal,
+  `F` fold, `C` check/call, `R` type a raise, `A` all-in amount, `Ctrl+Z` undo.
+
+## Saving: nothing gets lost
+
+Every change is saved on the device at once (localStorage). The status pill in
+the header always shows where the game is saved.
+
+When the app runs as the published claude.ai page, it also mirrors everything to
+the page's database:
+
+| Record | What it holds |
+| --- | --- |
+| `games/current` | The live game. It syncs between devices: open the page on a phone and a laptop, and the newer change wins. |
+| `hands/<session>_<n>` | One permanent record per finished hand: who paid what, who won, stacks after, and the action log |
+| `sessions/<session>` | Final results and full state of each session, saved when you tap "New session". These appear under **Past sessions**. |
+
+Hand and session records go through an outbox that is also saved on the
+device. If you're offline, or the tab closes before they are sent, they're sent
+the next time the page opens. Failed writes retry with backoff, and also when
+the connection comes back or the tab becomes visible. If two devices both
+change the same game, the older copy is kept as a session record, not
+thrown away.
+
+**Backup** copies the whole game as text, and can restore it from pasted text.
+This is useful for the local version, which has no database.
 
 ## Run it
 
@@ -38,8 +64,9 @@ npm start        # serves the folder at http://localhost:3000
 
 ## Tests
 
-The game rules live in `engine.js` as pure functions, and `tests/engine.test.js`
-tests them.
+The game rules (`engine.js`) and the storage layer (`store.js`) are tested with
+Node's built-in test runner. The storage tests use a fake database that can go
+offline.
 
 ```sh
 npm test
@@ -50,6 +77,7 @@ npm test
 | File | Purpose |
 | --- | --- |
 | `engine.js` | Seats, blinds, betting rounds, side pots, payouts, settlement |
+| `store.js` | Saving: device storage, cloud sync, outbox and retries |
 | `app.js` | UI rendering and event handling |
 | `styles.css` | Styles (light and dark themes) |
 | `index.html` | Page shell |

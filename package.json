@@ -5,6 +5,6 @@
   "description": "Track bets, blinds, pots and profit/loss for a home poker game.",
   "scripts": {
     "start": "npx --yes serve .",
-    "test": "node --test tests/engine.test.js"
+    "test": "node --test tests/engine.test.js tests/store.test.js"
   }
 }

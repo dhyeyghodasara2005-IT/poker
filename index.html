@@ -18,7 +18,8 @@
       <h1>Poker Chip Ledger</h1>
     </div>
     <div class="top-actions">
-      <button type="button" id="undo-btn" data-action="undo">Undo</button>
+      <span class="save-status" id="save-status" role="status" data-tone="ok">Saved on this device</span>
+      <button type="button" id="undo-btn" data-action="undo" title="Undo (Ctrl+Z)">Undo</button>
       <button type="button" id="reset-btn" class="btn-danger" data-action="reset">New session</button>
     </div>
   </header>
@@ -77,13 +78,23 @@
       </section>
 
       <section class="panel" aria-labelledby="log-h">
-        <div class="panel-head">
-          <h2 id="log-h">Hand log</h2>
-          <span class="label" id="cloud-status"></span>
-        </div>
+        <h2 id="log-h">Hand log</h2>
         <ol class="log" id="log" reversed></ol>
-        <button type="button" class="btn-small" data-action="export">Copy game data</button>
-        <textarea id="export-box" class="export-box" rows="8" readonly aria-label="Game data" hidden></textarea>
+      </section>
+
+      <section class="panel" id="past-panel" aria-labelledby="past-h" hidden>
+        <h2 id="past-h">Past sessions</h2>
+        <div id="past"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="backup-h">
+        <h2 id="backup-h">Backup</h2>
+        <p class="hint">Copy the whole game as text to keep it somewhere safe. To restore it, paste it here and tap Restore.</p>
+        <textarea id="backup-box" class="backup-box" rows="4" aria-label="Game data" placeholder="Paste game data here to restore it"></textarea>
+        <div class="row-tools">
+          <button type="button" class="btn-small" data-action="export">Copy game data</button>
+          <button type="button" class="btn-small" data-action="restore">Restore pasted data</button>
+        </div>
       </section>
     </div>
   </div>
@@ -91,6 +102,7 @@
 <div class="toast" id="toast" role="status" hidden></div>
 
 <script src="engine.js"></script>
+<script src="store.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
