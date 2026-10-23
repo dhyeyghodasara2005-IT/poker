@@ -21,6 +21,13 @@ profit or loss.
   amounts. Uncalled bets go back to the bettor.
 - **Showdown.** Tap the winner of each pot, or several players to split it. Odd
   chips go to the first winner left of the button.
+- **Uneven splits.** Give winners more or fewer shares of a pot. This covers hi-lo
+  games (high half and low half, including quartered pots) and running it twice.
+- **Misdeal or chop.** Cancel a hand and every bet goes back to whoever made it.
+  On a misdeal the same dealer redeals; on a chop the button moves on.
+- **Short stacks.** A big blind who is all-in for less than the blind still sets
+  the bet at the full big blind. A player facing only all-in opponents is asked to
+  call only what is needed to match them.
 - **Profit and loss.** Shown for every player as stack − total bought in. Totals
   confirm that no chips went missing.
 - **Settle up.** The fewest payments needed to square everyone up.

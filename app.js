@@ -11,6 +11,8 @@
     raiseTo: null, // raise amount being typed for the current actor
     raiseFor: null, // `${hand}:${street}:${player}:${currentBet}` the amount belongs to
     picks: {}, // showdown pot index -> selected winner ids
+    shares: {}, // showdown pot index -> { playerId: shares } for uneven splits
+    voidOpen: false, // misdeal/chop choices showing
     openRow: null, // player id whose tools are expanded
     armed: null // id of a destructive button waiting for a second tap
   };
@@ -121,6 +123,7 @@
       finishedAt: Date.now(),
       blinds: { small: s.settings.smallBlind, big: s.settings.bigBlind },
       dealer: nm(s.dealerId),
+      voided: !!lh.voided,
       contributions: lh.contributions.map(function (c) { return { name: nm(c.id), amount: c.amount }; }),
       awards: lh.awards.map(function (a) { return { name: nm(a.id), amount: a.amount }; }),
       players: summary(s),
@@ -356,7 +359,7 @@
     var h = state.hand;
     var el = $('action');
     if (!h) { el.innerHTML = renderNextHand(); return; }
-    if (h.street === 'showdown') { el.innerHTML = renderShowdown(); return; }
+    if (h.street === 'showdown') { el.innerHTML = renderShowdown() + renderVoid(); return; }
 
     var L = E.legalActions(state);
     if (!L) { el.innerHTML = ''; return; }
@@ -391,7 +394,22 @@
     } else if (L.stack > L.toCall) {
       html += '<p class="hint">Raising is closed: a short all-in did not reopen the betting.</p>';
     }
-    el.innerHTML = html;
+    el.innerHTML = html + renderVoid();
+  }
+
+  function renderVoid() {
+    if (!ui.voidOpen) {
+      return '<div class="void"><button type="button" class="btn-small" data-action="void-open">Misdeal or chop…</button></div>';
+    }
+    return '<div class="void"><p class="hint">Cancel this hand: every bet goes back to whoever made it.</p><div class="row-tools">' +
+      '<button type="button" class="btn-small" data-action="void" data-keep="1">Misdeal: same dealer redeals</button>' +
+      '<button type="button" class="btn-small" data-action="void" data-keep="0">Chop: button moves on</button>' +
+      '<button type="button" class="btn-small" data-action="void-close">Keep playing</button></div></div>';
+  }
+
+  function sharesFor(potIndex) {
+    var map = (ui.shares && ui.shares[potIndex]) || {};
+    return function (id) { return map[id] || 1; };
   }
 
   function renderNextHand() {
@@ -407,7 +425,9 @@
     } else {
       html += '<p class="empty">Add at least two players with chips to deal a hand.</p>';
     }
-    if (state.lastHand) {
+    if (state.lastHand && state.lastHand.voided) {
+      html += '<div class="last-hand">Hand #' + state.lastHand.number + ' was cancelled. All bets went back.</div>';
+    } else if (state.lastHand) {
       var lh = state.lastHand;
       var winners = lh.awards.filter(function (a) { return a.amount > 0; });
       var paid = {};
@@ -422,6 +442,10 @@
   function renderShowdown() {
     var h = state.hand;
     var html = '<div class="panel-head"><h2>Showdown</h2><span class="label">Tap the winner, or several to split</span></div>';
+    var n0 = h.seats.length;
+    var leftOfButton = function (a, b) {
+      return ((h.seats.indexOf(a) - 1 + n0) % n0) - ((h.seats.indexOf(b) - 1 + n0) % n0);
+    };
     var openCount = 0;
     h.pots.forEach(function (pot, i) {
       var title = h.pots.length === 1 ? 'Pot' : i === 0 ? 'Main pot' : 'Side pot ' + i;
@@ -440,11 +464,31 @@
         html += '<button type="button" data-action="pick" data-pot="' + i + '" data-id="' + id + '" aria-pressed="' +
           (picked.indexOf(id) >= 0) + '">' + name(id) + '</button>';
       });
-      var each = picked.length ? Math.floor(pot.amount / picked.length) : 0;
-      html += '</div><button type="button" class="btn-primary" data-action="award" data-pot="' + i + '"' +
+      html += '</div>';
+      var shareOf = sharesFor(i);
+      var ordered = picked.slice().sort(leftOfButton);
+      var parts = E.splitByShares(pot.amount, ordered.map(function (id) { return shareOf(id); }));
+      var even = ordered.every(function (id) { return shareOf(id) === shareOf(ordered[0]); });
+      if (picked.length > 1) {
+        html += '<div class="shares"><p class="hint">Equal shares for a tie. For hi-lo, a quartered pot or run it twice, ' +
+          'give more shares to whoever won more of this pot.</p>';
+        ordered.forEach(function (id, k) {
+          var sh = shareOf(id);
+          html += '<div class="share-row"><span class="share-name">' + name(id) + '</span>' +
+            '<span class="stepper"><button type="button" class="btn-small" data-action="share" data-delta="-1" data-pot="' + i +
+            '" data-id="' + id + '"' + (sh <= 1 ? ' disabled' : '') + ' aria-label="Fewer shares for ' + name(id) + '">−</button>' +
+            '<span class="num">' + sh + ' share' + (sh === 1 ? '' : 's') + '</span>' +
+            '<button type="button" class="btn-small" data-action="share" data-delta="1" data-pot="' + i + '" data-id="' + id +
+            '" aria-label="More shares for ' + name(id) + '">+</button></span>' +
+            '<span class="num share-amt">' + n(parts[k]) + '</span></div>';
+        });
+        html += '</div>';
+      }
+      html += '<button type="button" class="btn-primary" data-action="award" data-pot="' + i + '"' +
         (picked.length ? '' : ' disabled') + '>' +
         (picked.length === 0 ? 'Pick a winner' : picked.length === 1 ? 'Award ' + n(pot.amount) + ' to ' + name(picked[0])
-          : 'Split ' + n(pot.amount) + ' (' + n(each) + ' each)') + '</button></div>';
+          : even ? 'Split ' + n(pot.amount) + ' (' + n(Math.floor(pot.amount / picked.length)) + ' each)'
+            : 'Divide ' + n(pot.amount) + ' by shares') + '</button></div>';
     });
     if (!openCount) html += '<p class="empty">All pots settled.</p>';
     return html;
@@ -577,7 +621,7 @@
         archiveSession(state, 'ended');
         history.push(JSON.stringify(state));
         state = newSession(state.settings);
-        ui = { raiseTo: null, raiseFor: null, picks: {}, openRow: null, armed: null };
+        ui = { raiseTo: null, raiseFor: null, picks: {}, shares: {}, voidOpen: false, openRow: null, armed: null };
         save(); render(); toast('New session started');
         break;
       case 'fresh':
@@ -587,6 +631,8 @@
         break;
       case 'deal':
         ui.picks = {};
+        ui.shares = {};
+        ui.voidOpen = false;
         mutate(function () { E.startHand(state); });
         break;
       case 'fold': case 'check': case 'call':
@@ -611,12 +657,32 @@
         render();
         break;
       }
+      case 'share': {
+        var sp = Number(btn.dataset.pot);
+        ui.shares = ui.shares || {};
+        var m = ui.shares[sp] = ui.shares[sp] || {};
+        m[id] = Math.max(1, (m[id] || 1) + Number(btn.dataset.delta));
+        render();
+        break;
+      }
       case 'award': {
         var potIdx = Number(btn.dataset.pot);
         var winners = ui.picks[potIdx] || [];
-        if (mutate(function () { E.awardShowdownPot(state, potIdx, winners); })) {
-          if (!state.hand) ui.picks = {};
+        var shareOf = sharesFor(potIdx);
+        var shares = winners.map(function (w) { return shareOf(w); });
+        if (mutate(function () { E.awardShowdownPot(state, potIdx, winners, shares); })) {
+          if (!state.hand) { ui.picks = {}; ui.shares = {}; ui.voidOpen = false; }
         }
+        break;
+      }
+      case 'void-open': ui.voidOpen = true; render(); break;
+      case 'void-close': ui.voidOpen = false; render(); break;
+      case 'void': {
+        var keep = btn.dataset.keep === '1';
+        ui.voidOpen = false;
+        ui.picks = {};
+        ui.shares = {};
+        if (mutate(function () { E.voidHand(state, keep); })) toast(keep ? 'Misdeal: bets returned' : 'Hand chopped: bets returned');
         break;
       }
       case 'tools':

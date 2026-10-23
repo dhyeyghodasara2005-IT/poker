@@ -485,3 +485,19 @@ input[type="text"], input[type="number"], textarea { font-size: 16px; } /* stops
   .actor-name { font-size: 1.375rem; }
   .raise-presets button { min-height: 40px; }
 }
+
+/* ---------- uneven splits & cancelling a hand ---------- */
+.shares { display: grid; gap: 6px; }
+.share-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(4.5em, auto);
+  gap: 8px;
+  align-items: center;
+}
+.share-name { font-weight: 600; overflow-wrap: anywhere; }
+.stepper { display: inline-flex; align-items: center; gap: 6px; }
+.stepper .btn-small { min-width: 36px; padding: 4px 0; font-size: var(--step-1); line-height: 1; }
+.stepper .num { min-width: 5.5em; text-align: center; font-size: var(--step--1); }
+.share-amt { text-align: right; font-weight: 700; }
+.void { display: grid; gap: 8px; padding-top: 12px; border-top: 1px dashed var(--line); }
+.void > .btn-small { justify-self: start; color: var(--muted); }

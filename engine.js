@@ -223,7 +223,8 @@
       (hand.p[hand.sbId].allIn ? ' (all-in)' : '') + '.');
     addLog(state, nameOf(state, hand.bbId) + ' posts big blind ' + bbPaid +
       (hand.p[hand.bbId].allIn ? ' (all-in)' : '') + '.');
-    hand.currentBet = Math.max(sbPaid, bbPaid);
+    // A big blind all-in for less still sets the bet at the full big blind.
+    hand.currentBet = Math.max(sbPaid, bbPaid, bb);
 
     var first = findNextActor(state, pos.firstPreflop);
     if (first >= 0) hand.toAct = first;
@@ -242,10 +243,18 @@
   function needsAction(hand, id) {
     var hp = hand.p[id];
     if (hp.folded || hp.allIn) return false;
-    if (hp.bet < hand.currentBet) return true;
-    if (hp.acted) return false;
-    // Nobody left to bet against: a matched player has nothing to decide.
-    return activePlayers(hand).length > 1;
+    if (activePlayers(hand).length <= 1) {
+      // Nobody left to bet against: only a bigger all-in needs an answer.
+      return hp.bet < maxOtherBet(hand, id);
+    }
+    return hp.bet < hand.currentBet || !hp.acted;
+  }
+
+  function maxOtherBet(hand, id) {
+    return hand.seats.reduce(function (m, other) {
+      var op = hand.p[other];
+      return other !== id && !op.folded ? Math.max(m, op.bet) : m;
+    }, 0);
   }
 
   function findNextActor(state, fromPos) {
@@ -264,8 +273,10 @@
     var id = hand.seats[hand.toAct];
     var p = getPlayer(state, id);
     var hp = hand.p[id];
-    var toCall = Math.max(0, hand.currentBet - hp.bet);
     var othersWithChips = activePlayers(hand).filter(function (x) { return x !== id; }).length > 0;
+    // Facing only all-in players, matching the biggest of them is enough.
+    var target = othersWithChips ? hand.currentBet : maxOtherBet(hand, id);
+    var toCall = Math.max(0, target - hp.bet);
     var maxTo = hp.bet + p.stack;
     var canRaise = !hp.acted && p.stack > toCall && othersWithChips;
     return {
@@ -448,32 +459,48 @@
     maybeFinish(state);
   }
 
-  function awardPot(state, pot, winners, returned) {
+  // Splits a pot by shares: equal shares for a tie, or e.g. 3:1 when one
+  // player wins the high half and ties for the low half (hi-lo).
+  function splitByShares(amount, shares) {
+    var total = shares.reduce(function (a, b) { return a + b; }, 0);
+    var parts = shares.map(function (sh) { return Math.floor(amount * sh / total); });
+    var odd = amount - parts.reduce(function (a, b) { return a + b; }, 0);
+    // Odd chips go one each to the winners nearest the button's left.
+    for (var i = 0; odd > 0; i = (i + 1) % parts.length, odd--) parts[i]++;
+    return parts;
+  }
+
+  function awardPot(state, pot, winners, returned, shares) {
     var hand = state.hand;
     var n = hand.seats.length;
-    // Odd chips go to the first winner left of the button.
+    var shareOf = {};
+    winners.forEach(function (id, i) { shareOf[id] = shares ? shares[i] : 1; });
     var ordered = winners.slice().sort(function (a, b) {
       return ((hand.seats.indexOf(a) - 1 + n) % n) - ((hand.seats.indexOf(b) - 1 + n) % n);
     });
-    var share = Math.floor(pot.amount / ordered.length);
-    var odd = pot.amount - share * ordered.length;
+    var parts = splitByShares(pot.amount, ordered.map(function (id) { return shareOf[id]; }));
     pot.winners = ordered.map(function (id, i) {
-      var amount = share + (i < odd ? 1 : 0);
-      getPlayer(state, id).stack += amount;
-      return { id: id, amount: amount };
+      getPlayer(state, id).stack += parts[i];
+      return { id: id, amount: parts[i] };
     });
     var label = hand.pots.length > 1 ? (pot.index === 0 ? 'the main pot' : 'side pot ' + pot.index) : 'the pot';
+    var even = parts.every(function (x) { return Math.abs(x - parts[0]) <= 1; });
     if (returned) {
       addLog(state, 'Uncalled ' + pot.amount + ' returned to ' + nameOf(state, ordered[0]) + '.');
     } else if (ordered.length === 1) {
       addLog(state, nameOf(state, ordered[0]) + ' wins ' + label + ' (' + pot.amount + ').');
-    } else {
+    } else if (even) {
       addLog(state, ordered.map(function (id) { return nameOf(state, id); }).join(' and ') +
         ' split ' + label + ' (' + pot.amount + ').');
+    } else {
+      addLog(state, capital(label) + ' (' + pot.amount + ') divided: ' + pot.winners.map(function (w) {
+        return nameOf(state, w.id) + ' ' + w.amount;
+      }).join(', ') + '.');
     }
   }
 
-  function awardShowdownPot(state, potIndex, winners) {
+  // `shares` is optional: one positive whole number per winner (default 1 each).
+  function awardShowdownPot(state, potIndex, winners, shares) {
     var hand = state.hand;
     if (!hand || hand.street !== 'showdown') throw new Error('There is no showdown to settle.');
     var pot = hand.pots[potIndex];
@@ -482,8 +509,35 @@
     winners.forEach(function (id) {
       if (pot.eligible.indexOf(id) < 0) throw new Error(nameOf(state, id) + ' is not in that pot.');
     });
-    awardPot(state, pot, winners, false);
+    if (winners.some(function (id, i) { return winners.indexOf(id) !== i; })) throw new Error('A player is picked twice.');
+    if (shares) {
+      if (shares.length !== winners.length ||
+          !shares.every(function (x) { return Math.floor(x) === x && x > 0; })) {
+        throw new Error('Each winner needs a whole number of shares, 1 or more.');
+      }
+    }
+    awardPot(state, pot, winners, false, shares);
     maybeFinish(state);
+  }
+
+  // Misdeal or chop: every chip goes back to whoever put it in.
+  // With keepButton the same dealer deals again (a misdeal).
+  function voidHand(state, keepButton) {
+    var hand = state.hand;
+    if (!hand) throw new Error('There is no hand to cancel.');
+    var received = {};
+    (hand.pots || []).forEach(function (pot) {
+      (pot.winners || []).forEach(function (w) { received[w.id] = (received[w.id] || 0) + w.amount; });
+    });
+    hand.seats.forEach(function (id) {
+      getPlayer(state, id).stack += hand.p[id].total - (received[id] || 0);
+    });
+    if (keepButton) state.buttonOverride = hand.dealerId;
+    addLog(state, keepButton
+      ? 'Misdeal. All bets returned; ' + nameOf(state, hand.dealerId) + ' deals again.'
+      : 'Hand cancelled. All bets returned.');
+    hand.result = { awards: [], voided: true };
+    finishHand(state);
   }
 
   function maybeFinish(state) {
@@ -504,6 +558,7 @@
     var hand = state.hand;
     state.lastHand = {
       number: hand.number,
+      voided: !!hand.result.voided,
       awards: hand.result.awards,
       contributions: hand.seats.map(function (id) { return { id: id, amount: hand.p[id].total }; })
     };
@@ -556,6 +611,8 @@
     legalActions: legalActions,
     act: act,
     awardShowdownPot: awardShowdownPot,
+    voidHand: voidHand,
+    splitByShares: splitByShares,
     computePots: computePots,
     potTotal: potTotal,
     potInPlay: potInPlay,

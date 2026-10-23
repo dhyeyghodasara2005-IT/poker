@@ -208,3 +208,121 @@ test('an uncalled bet is returned at showdown', () => {
   assert.equal(stack(s, 'Ann'), 800); // 400 uncalled came back
   assert.equal(E.potInPlay(s.hand), 400);
 });
+
+// ---------- outcome coverage ----------
+
+test('big blind all-in for less than the blind: others still call the full blind', () => {
+  const s = table(['Ann', 'Bob', 'Cat'], [1000, 1000, 5]);
+  E.startHand(s); // Ann D, Bob SB, Cat BB all-in for 5
+  assert.equal(toAct(s), 'Ann');
+  assert.equal(E.legalActions(s).toCall, 20);
+  E.act(s, 'call');
+  assert.equal(E.legalActions(s).toCall, 10); // Bob completes
+  E.act(s, 'call');
+  for (let i = 0; i < 6; i++) E.act(s, 'check');
+  assert.deepEqual(s.hand.pots.map((p) => p.amount), [15, 30]);
+  E.awardShowdownPot(s, 0, [id(s, 'Cat')]);
+  E.awardShowdownPot(s, 1, [id(s, 'Ann')]);
+  assert.deepEqual([stack(s, 'Ann'), stack(s, 'Bob'), stack(s, 'Cat')], [1010, 980, 15]);
+});
+
+test('heads-up with a short big blind goes straight to showdown and returns the excess', () => {
+  const s = table(['Ann', 'Bob'], [1000, 5]);
+  E.startHand(s); // Ann SB 10, Bob BB all-in 5
+  assert.equal(s.hand.street, 'showdown');
+  assert.equal(stack(s, 'Ann'), 995); // 5 uncalled back
+  E.awardShowdownPot(s, 0, [id(s, 'Bob')]);
+  assert.equal(stack(s, 'Bob'), 10);
+});
+
+test('facing only an all-in smaller than the bet, the call is just enough to match it', () => {
+  const s = table(['Ann', 'Bob', 'Cat'], [15, 1000, 1000]);
+  E.startHand(s); // Ann D first, Bob SB 10, Cat BB 20
+  E.act(s, 'call'); // Ann all-in for 15
+  E.act(s, 'call'); // Bob completes to 20
+  assert.equal(toAct(s), 'Cat');
+  assert.equal(E.legalActions(s).canCheck, true);
+});
+
+test('everyone folds to the big blind (a walk)', () => {
+  const s = table(['Ann', 'Bob', 'Cat', 'Dan'], [1000, 1000, 1000, 1000]);
+  E.startHand(s);
+  E.act(s, 'fold'); E.act(s, 'fold'); E.act(s, 'fold');
+  assert.equal(s.hand, null);
+  assert.deepEqual([stack(s, 'Bob'), stack(s, 'Cat')], [990, 1010]);
+});
+
+test('four-way all-in: tie for the main pot, different winners of each side pot', () => {
+  const s = table(['A', 'B', 'C', 'D'], [100, 300, 300, 600]);
+  E.startHand(s);
+  E.act(s, 'allin'); E.act(s, 'allin'); E.act(s, 'allin'); E.act(s, 'allin');
+  assert.deepEqual(s.hand.pots.map((p) => p.amount), [400, 600, 300]); // last is D's uncalled 300
+  E.awardShowdownPot(s, 0, [id(s, 'A'), id(s, 'D')]);
+  E.awardShowdownPot(s, 1, [id(s, 'B'), id(s, 'C')]);
+  assert.deepEqual([stack(s, 'A'), stack(s, 'B'), stack(s, 'C'), stack(s, 'D')], [200, 300, 300, 500]);
+});
+
+test('three-way tie with an odd chip', () => {
+  const s = table(['A', 'B', 'C', 'D'], [1000, 1000, 1000, 1000], 1, 2);
+  E.startHand(s); // A D, B SB 1, C BB 2, D first
+  E.act(s, 'call'); E.act(s, 'raise', 20); E.act(s, 'fold'); E.act(s, 'call'); E.act(s, 'call');
+  for (let i = 0; i < 9; i++) E.act(s, 'check');
+  assert.equal(s.hand.pots[0].amount, 61);
+  E.awardShowdownPot(s, 0, [id(s, 'A'), id(s, 'C'), id(s, 'D')]);
+  assert.deepEqual([stack(s, 'C'), stack(s, 'D'), stack(s, 'A')], [1001, 1000, 1000]); // C is first left of the button
+});
+
+test('hi-lo: high hand and a tie for low gets three quarters (quartered pot)', () => {
+  const s = table(['A', 'B', 'C'], [1000, 1000, 1000]);
+  E.startHand(s);
+  E.act(s, 'raise', 200); E.act(s, 'call'); E.act(s, 'call'); // pot 600
+  for (let i = 0; i < 9; i++) E.act(s, 'check');
+  // A wins high (2 shares of 4) and ties B for low (1 share each).
+  E.awardShowdownPot(s, 0, [id(s, 'A'), id(s, 'B')], [3, 1]);
+  assert.deepEqual([stack(s, 'A'), stack(s, 'B'), stack(s, 'C')], [1250, 950, 800]);
+});
+
+test('run it twice: different winner each run takes half each', () => {
+  const s = table(['A', 'B'], [500, 500]);
+  E.startHand(s);
+  E.act(s, 'allin'); E.act(s, 'call');
+  E.awardShowdownPot(s, 0, [id(s, 'A'), id(s, 'B')], [1, 1]);
+  assert.deepEqual([stack(s, 'A'), stack(s, 'B')], [500, 500]);
+});
+
+test('uneven shares are validated', () => {
+  const s = table(['A', 'B'], [500, 500]);
+  E.startHand(s);
+  E.act(s, 'allin'); E.act(s, 'call');
+  assert.throws(() => E.awardShowdownPot(s, 0, [id(s, 'A'), id(s, 'B')], [1, 0]), /whole number of shares/);
+  assert.throws(() => E.awardShowdownPot(s, 0, [id(s, 'A'), id(s, 'A')]), /picked twice/);
+});
+
+test('misdeal returns every bet and the same dealer deals again', () => {
+  const s = table(['A', 'B', 'C'], [1000, 1000, 1000]);
+  E.startHand(s);
+  E.act(s, 'raise', 60);
+  E.voidHand(s, true);
+  assert.equal(s.hand, null);
+  assert.deepEqual([stack(s, 'A'), stack(s, 'B'), stack(s, 'C')], [1000, 1000, 1000]);
+  assert.equal(E.nextPositions(s).dealerId, id(s, 'A'));
+  assert.equal(s.lastHand.voided, true);
+});
+
+test('chop returns the blinds and the button moves on', () => {
+  const s = table(['A', 'B', 'C'], [1000, 1000, 1000]);
+  E.startHand(s);
+  E.act(s, 'fold');
+  E.voidHand(s, false);
+  assert.deepEqual([stack(s, 'B'), stack(s, 'C')], [1000, 1000]);
+  assert.equal(E.nextPositions(s).dealerId, id(s, 'B'));
+});
+
+test('cancelling at showdown undoes pots already paid out', () => {
+  const s = table(['A', 'B', 'C'], [100, 300, 300]);
+  E.startHand(s);
+  E.act(s, 'allin'); E.act(s, 'allin'); E.act(s, 'allin');
+  E.awardShowdownPot(s, 0, [id(s, 'A')]);
+  E.voidHand(s, true);
+  assert.deepEqual([stack(s, 'A'), stack(s, 'B'), stack(s, 'C')], [100, 300, 300]);
+});
